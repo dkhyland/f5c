@@ -1716,3 +1716,49 @@ void init_opt(opt_t* opt) {
     opt->cuda_avg_events_per_kmer=2.0f; //only if CUDA_DYNAMIC_MALLOC is unset
     opt->cuda_max_avg_events_per_kmer=5.0f;
 }
+
+//CHANGE: function that sets the parameter values based on specified config file.
+void set_profile(char *profile, opt_t *opt){
+    //profile name specifies a file from which to read values from.
+    FILE *fptr = fopen(profile, "r");
+    int32_t batch_size, num_thread;
+    int64_t batch_size_bases, ultra_thresh;
+    float cuda_max_readlen,cuda_avg_events_per_kmer,cuda_max_avg_events_per_kmer;
+    if(fptr == NULL){
+        fprintf(stderr,"File not found\n");
+        return;
+    }
+    
+    //read file and set parameter values
+    int result = fscanf(fptr, "%d %ld %d %ld %f %f %f",&batch_size,&batch_size_bases,&num_thread,&ultra_thresh,&cuda_max_readlen,&cuda_avg_events_per_kmer,&cuda_max_avg_events_per_kmer);
+
+    fprintf(stderr,"PROFILE LOADED\nbatch_size: %d\nbatch_size_bases: %ld\nnum_thread: %d\nultra_thresh: %ld\ncuda_max_readlen: %f\ncuda_avg_events_per_kmer: %.2f\ncuda_max_avg_events_per_kmer: %.2f\n",batch_size,batch_size_bases,num_thread,ultra_thresh,cuda_max_readlen,cuda_avg_events_per_kmer,cuda_max_avg_events_per_kmer);
+
+    if(result < 7){
+        fprintf(stderr,"Error reading config file.\n");
+        return;
+    }
+
+    set_opts(opt,batch_size,batch_size_bases,num_thread,ultra_thresh,cuda_max_readlen,cuda_avg_events_per_kmer,cuda_max_avg_events_per_kmer);
+
+    /*Loading preset values
+    if(strcmp(profile,"example1") == 0){
+        //profile 1
+        set_opts(opt,1,1,1,1,1,1,1);
+    }else if(strcmp(profile,"example2") == 0){
+        //profile 2
+    }else{
+        //default profile/automatic configuration?
+    }*/
+}
+
+//CHANGE: helper function to set user specified options. Pass -1 to corresponding arg if using default parameter value.
+void set_opts(opt_t *opt, int32_t batch_size, int64_t batch_size_bases, int32_t num_thread, int64_t ultra_thresh, float cuda_max_readlen, float cuda_avg_events_per_kmer, float cuda_max_avg_events_per_kmer){
+    if( batch_size != -1) opt->batch_size = batch_size;
+    if( batch_size_bases != -1) opt->batch_size_bases = batch_size_bases;
+    if( num_thread != -1) opt->num_thread = num_thread;
+    if( ultra_thresh != -1) opt->ultra_thresh = ultra_thresh;
+    if( cuda_max_readlen != -1) opt->cuda_max_readlen = cuda_max_readlen;
+    if( cuda_avg_events_per_kmer != -1) opt->cuda_avg_events_per_kmer = cuda_avg_events_per_kmer;
+    if( cuda_max_avg_events_per_kmer != -1) opt->cuda_max_avg_events_per_kmer = cuda_max_avg_events_per_kmer;
+}
