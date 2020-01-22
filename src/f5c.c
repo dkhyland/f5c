@@ -1730,7 +1730,7 @@ void set_profile(char *profile, opt_t *opt){
     }
     
     //read file and set parameter values
-    int result = fscanf(fptr, "%d %ld %d %ld %f %f %f",&batch_size,&batch_size_bases,&num_thread,&ultra_thresh,&cuda_max_readlen,&cuda_avg_events_per_kmer,&cuda_max_avg_events_per_kmer);
+    int result = fscanf(fptr, "%f %f %f %d %ld %d %ld",&cuda_max_readlen,&cuda_avg_events_per_kmer,&cuda_max_avg_events_per_kmer,&batch_size,&batch_size_bases,&num_thread,&ultra_thresh);
 
     fprintf(stderr,"PROFILE LOADED\nbatch_size: %d\nbatch_size_bases: %ld\nnum_thread: %d\nultra_thresh: %ld\ncuda_max_readlen: %f\ncuda_avg_events_per_kmer: %.2f\ncuda_max_avg_events_per_kmer: %.2f\n",batch_size,batch_size_bases,num_thread,ultra_thresh,cuda_max_readlen,cuda_avg_events_per_kmer,cuda_max_avg_events_per_kmer);
 

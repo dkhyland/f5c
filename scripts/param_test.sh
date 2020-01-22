@@ -204,7 +204,7 @@ do
 		if [ -z ${profile} ]; then
 			${exepath} call-methylation -b ${bamfile} -g ${ref} -r ${reads} --cuda-max-lf ${max_lf} --cuda-avg-epk ${avg_epk} --cuda-max-epk ${max_epk} -K ${batchsize} -B ${max_bases} -t ${threads} --ultra-thresh ${ultra_thresh} >"${testdir}/${dataset}/result.txt" 2> "${run_folder}/raw_${run_number}.txt"
 		else
-			${exepath} call-methylation -b ${bamfile} -g ${ref} -r ${reads} -x ${profile} --cuda-max-lf ${max_lf} --cuda-avg-epk ${avg_epk} --cuda-max-epk ${max_epk} -K ${batchsize} -B ${max_bases} -t ${threads} --ultra-thresh ${ultra_thresh} 2>&1 >"${testdir}/${dataset}/result.txt" 2> "${run_folder}/raw_${run_number}.txt"
+			${exepath} call-methylation -b ${bamfile} -g ${ref} -r ${reads} -x ${profile} 2>&1 >"${testdir}/${dataset}/result.txt" 2> "${run_folder}/raw_${run_number}.txt"
 		fi
 	else
 		mode_test "$@"
@@ -214,7 +214,7 @@ do
 	echo "Extracting data..."
 
 	#useful data
-	cat "${run_folder}/raw_${run_number}.txt" | grep 'init_cuda\|align_cuda\|load_balance\|memory_balance\|total entries\|total bases\|sec\|max-lf\|Real time:\|::INFO' | tee "${run_folder}/useful_${run_number}.txt"	
+	cat "${run_folder}/raw_${run_number}.txt" | grep 'init_cuda\|align_cuda\|load_balance\|memory_balance\|total entries\|total bases\|sec\|max-lf\|Real time:\|::INFO' | tee "${run_folder}/useful_${run_number}.txt"
 
 	#warnings for parameter tuning
 	cat "${run_folder}/useful_${run_number}.txt" | grep '::INFO' > "${run_folder}/warning_${run_number}.txt"
@@ -223,7 +223,7 @@ do
 	tail -n 24 "${run_folder}/useful_${run_number}.txt" > "${run_folder}/summary_${run_number}.txt"
 
 	#parameters used for the test and key metrics
-	printf "${run_number}: " >> "${resultdir}/${dataset}/parameters.txt"
+	printf "${run_number}: " >> "${resultdir}/${dataset}/parameters.txt".
 	cat "${run_folder}/raw_${run_number}.txt" | grep 'max-lf:' | tr '\n' ' ' >> "${resultdir}/${dataset}/parameters.txt"
 	printf ",Wall: " >> "${resultdir}/${dataset}/parameters.txt"
 	cat "${run_folder}/raw_${run_number}.txt" | grep 'Real time:' | grep -o -P '(?<=Real time: ).*(?= sec; CPU)' >> "${resultdir}/${dataset}/parameters.txt"
