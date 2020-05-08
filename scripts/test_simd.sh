@@ -148,6 +148,8 @@ if [ ${simd} -eq 1 ]; then
 	[ ! -f "${resultdir}/simd_processing.txt" ] || rm "${resultdir}/simd_processing.txt"
 	[ ! -f "${resultdir}/simd_align.txt" ] || rm "${resultdir}/simd_align.txt"
 
+	command="${command} --disable-simd=no"
+
 	#SIMD benchmarking
 	for i in $( seq 1 ${num_runs} ); do
 		echo
