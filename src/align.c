@@ -221,7 +221,7 @@ int32_t align(AlignedPair* out_2, char* sequence, int32_t sequence_len,
         kmer_ranks[i] = get_kmer_rank(substring, k);
         //<<<<<<<<< New replacement over
     }
-
+    
 #ifdef ALIGN_2D_ARRAY
     float** bands = (float**)malloc(sizeof(float*) * n_bands);
     MALLOC_CHK(bands);

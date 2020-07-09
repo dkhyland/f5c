@@ -5,6 +5,7 @@
 //#define DEBUG_ESTIMATED_SCALING 1
 //#define DEBUG_RECALIB_SCALING 1
 //#define DEBUG_ADAPTIVE 1
+#define VEC_SIZE 4
 
 //Code was adapted from Nanopolish : nanopolish_raw_loader.cpp
 
@@ -192,11 +193,19 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
     float lp_stay = log(p_stay);
     float lp_step = log(1.0 - exp(lp_skip) - exp(lp_stay));
     float lp_trim = log(0.01);
+    float log_inv_sqrt_2pi = -0.918938f; // Natural logarithm
 
     //SSE2 constant vectors
     __m128 lp_skip_vec = _mm_set1_ps(lp_skip);
     __m128 lp_stay_vec = _mm_set1_ps(lp_stay);
     __m128 lp_step_vec = _mm_set1_ps(lp_step);
+    __m128 scaling_scale_vec = _mm_set1_ps(scaling.scale);
+    __m128 scaling_shift_vec = _mm_set1_ps(scaling.shift);
+    __m128 log_invsqrt2pi_vec = _mm_set1_ps(log_inv_sqrt_2pi);
+    __m128 minus_half_vec = _mm_set1_ps(-0.5f);
+    // __m128 inf_vec = _mm_set1_ps(INFINITY);
+    // __m128 bandwidth_vec = _mm_set1_ps(float(ALN_BANDWIDTH));
+    // __m128 zero_vec = _mm_set1_ps(0);
 
     // dp matrix
     int32_t n_rows = n_events + 1;
@@ -280,18 +289,34 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
     int32_t event_idx,kmer_idx,kmer_rank,offset_up,offset_left,offset_diag;
     float lp_emission;
     int32_t fills = 0;
-    float *up_arr = (float *)malloc(sizeof(float) * 4);
+    float *up_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
     MALLOC_CHK(up_arr);
-    float *left_arr = (float *)malloc(sizeof(float) * 4);
+    float *left_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
     MALLOC_CHK(left_arr);
-    float *diag_arr = (float *)malloc(sizeof(float) * 4);
+    float *diag_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
     MALLOC_CHK(diag_arr);
-    float *lp_emission_arr = (float *)malloc(sizeof(float) * 4);
+    float *lp_emission_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
     MALLOC_CHK(lp_emission_arr);
-    int32_t *from_arr = (int32_t *)malloc(sizeof(int32_t) * 4);
+    int32_t *from_arr = (int32_t *)malloc(sizeof(int32_t) * VEC_SIZE);
     MALLOC_CHK(from_arr);
-    float * band_arr = (float *)malloc(sizeof(float) * 4);
+    float * band_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
     MALLOC_CHK(band_arr);
+    //Vectorisation of valid offset computation
+    // float * offset_up_arr =  (float *)malloc(sizeof(float) * VEC_SIZE);
+    // MALLOC_CHK(offset_up_arr);
+    // float * offset_left_arr =  (float *)malloc(sizeof(float) * VEC_SIZE);
+    // MALLOC_CHK(offset_left_arr);
+    // float * offset_diag_arr =  (float *)malloc(sizeof(float) * VEC_SIZE);
+    // MALLOC_CHK(offset_diag_arr);
+    //Vectorisation of log_probability_match
+    float * models_mean_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
+    MALLOC_CHK(models_mean_arr);
+    float * models_stdv_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
+    MALLOC_CHK(models_stdv_arr);
+    float * models_logstdv_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
+    MALLOC_CHK(models_logstdv_arr);
+    float * events_arr = (float *)malloc(sizeof(float) * VEC_SIZE);
+    MALLOC_CHK(events_arr);
 
 #ifdef DEBUG_ADAPTIVE
     fprintf(stderr, "[trim] bi: %d o: %d e: %d k: %d s: %.2lf\n", 1,
@@ -350,8 +375,8 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
         max_offset = MIN(max_offset, bandwidth);
 
         //Inner loop: Parallelised with SSE2. Jump up 4 every time
-        for (int32_t offset = min_offset; offset < max_offset; offset += 4) {
-            if(offset + 4 >= max_offset){
+        for (int32_t offset = min_offset; offset < max_offset; offset += VEC_SIZE) {
+            if(offset + VEC_SIZE >= max_offset){
                 //If we don't have >= 4 cells left to fill, compute individually using a sequential loop
                 for(int32_t seq_offset = offset; seq_offset < max_offset; seq_offset++){
                     event_idx = event_at_offset(band_idx, seq_offset);
@@ -416,7 +441,7 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
                 //Compute using SIMD
                 //Need to load values sequentially because the __m128i vectors don't overlap
                 //Load 4 values corresponding to the left, up and diagonal bands into arrays
-                for (int32_t vec_pos = 0; vec_pos < 4 ; ++vec_pos) {
+                for (int32_t vec_pos = 0; vec_pos < VEC_SIZE ; ++vec_pos) {
                     //Index of the first element of the vector we are looking at
                     event_idx = event_at_offset(band_idx, offset + vec_pos);
                     kmer_idx = kmer_at_offset(band_idx, offset + vec_pos);
@@ -438,7 +463,7 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
                     assert(offset_up - offset_left == 1);
                     assert(offset >= 0 && offset < bandwidth);
 #endif
-
+                    // Serial computations
                     up_arr[vec_pos] = is_offset_valid(offset_up)
                             ? BAND_ARRAY(band_idx - 1,offset_up)
                             : -INFINITY;
@@ -451,22 +476,77 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
                                 ? BAND_ARRAY(band_idx - 2,offset_diag)
                                 : -INFINITY;
 
-                    lp_emission_arr[vec_pos] = log_probability_match_r9(scaling, models, events, event_idx,
-                                            kmer_rank, strand_idx, sample_rate);
+                    // lp_emission_arr[vec_pos] = log_probability_match_r9(scaling, models, events, event_idx,
+                    //                         kmer_rank, strand_idx, sample_rate);
+
+                    // Vector computations
+                    // Offsets
+                    // offset_up_arr[vec_pos] = float(offset_up);
+                    // offset_left_arr[vec_pos] = float(offset_left);
+                    // offset_diag_arr[vec_pos] = float(offset_diag);
+
+                    // Values in bands
+                    // up_arr[vec_pos] = BAND_ARRAY(band_idx - 1,offset_up);
+                    // left_arr[vec_pos] = BAND_ARRAY(band_idx - 1,offset_left);
+                    // diag_arr[vec_pos] = BAND_ARRAY(band_idx - 2,offset_diag);
+
+                    // Log probability match values
+                    models_mean_arr[vec_pos] = models[kmer_rank].level_mean;
+                    models_stdv_arr[vec_pos] = models[kmer_rank].level_stdv;
+                    #ifdef CACHED_LOG
+                        models_logstdv_arr[vec_pos] = models[kmer_rank].level_log_stdv;
+                    #else
+                        models_logstdv_arr[vec_pos] = log(models[kmer_rank].level_stdv);
+                    #endif
+                    events_arr[vec_pos] = events.event[event_idx].mean;
                 }
 
-                //convert data from the arrays to __m128
+                // convert data from the arrays to __m128
+                // values
                 __m128 up_vec = _mm_set_ps(up_arr[0],up_arr[1],up_arr[2],up_arr[3]);
                 __m128 left_vec = _mm_set_ps(left_arr[0],left_arr[1],left_arr[2],left_arr[3]);
                 __m128 diag_vec = _mm_set_ps(diag_arr[0],diag_arr[1],diag_arr[2],diag_arr[3]);
-                __m128 lp_emission_vec = _mm_set_ps(lp_emission_arr[0],lp_emission_arr[1],lp_emission_arr[2],lp_emission_arr[3]);
+                // __m128 lp_emission_vec = _mm_set_ps(lp_emission_arr[0],lp_emission_arr[1],lp_emission_arr[2],lp_emission_arr[3]);
 
+                // offsets
+                // __m128 offset_up_vec = _mm_set_ps(offset_up_arr[0],offset_up_arr[1],offset_up_arr[2],offset_up_arr[3]);
+                // __m128 offset_left_vec = _mm_set_ps(offset_left_arr[0],offset_left_arr[1],offset_left_arr[2],offset_left_arr[3]);
+                // __m128 offset_diag_vec = _mm_set_ps(offset_diag_arr[0],offset_diag_arr[1],offset_diag_arr[2],offset_diag_arr[3]);
+
+                // log_probability_match values
+                __m128 models_mean_vec = _mm_set_ps(models_mean_arr[0],models_mean_arr[1],models_mean_arr[2],models_mean_arr[3]);
+                __m128 gp_stdv_vec = _mm_set_ps(models_stdv_arr[0],models_stdv_arr[1],models_stdv_arr[2],models_stdv_arr[3]);
+                __m128 gp_logstdv_vec = _mm_set_ps(models_logstdv_arr[0],models_logstdv_arr[1],models_logstdv_arr[2],models_logstdv_arr[3]);
+                __m128 events_vec = _mm_set_ps(events_arr[0],events_arr[1],events_arr[2],events_arr[3]);
+
+                // vectorised version of log_probability_match
+                __m128 gp_mean_vec = _mm_add_ps(scaling_shift_vec,_mm_mul_ps(scaling_scale_vec,models_mean_vec));
+                __m128 a_vec = _mm_div_ps(_mm_sub_ps(events_vec,gp_mean_vec),gp_stdv_vec);
+                __m128 lp_emission_vec = _mm_add_ps(_mm_sub_ps(log_invsqrt2pi_vec,gp_logstdv_vec),_mm_mul_ps(_mm_mul_ps(a_vec,a_vec),minus_half_vec));
+
+                // // vectorised computation of valid offsets
+                // __m128 up_vec_valid = _mm_and_ps(_mm_cmpge_ps(offset_up_vec,zero_vec),_mm_cmplt_ps(offset_up_vec,bandwidth_vec));
+                // __m128 left_vec_valid = _mm_and_ps(_mm_cmpge_ps(offset_left_vec,zero_vec),_mm_cmplt_ps(offset_left_vec,bandwidth_vec));
+                // __m128 diag_vec_valid = _mm_and_ps(_mm_cmpge_ps(offset_diag_vec,zero_vec),_mm_cmplt_ps(offset_diag_vec,bandwidth_vec));
+
+                // print_float_vec(_mm_cmpge_ps(offset_up_vec,zero_vec), ">0");
+                // print_float_vec(_mm_cmplt_ps(offset_up_vec,bandwidth_vec), "<bandwidth");
+                // print_float_vec(_mm_and_ps(_mm_cmpge_ps(offset_up_vec,zero_vec),_mm_cmplt_ps(offset_up_vec,bandwidth_vec)), "and");
+                // fprintf(stderr,"%f %f %f %f\n",offset_left_arr[0],offset_left_arr[1],offset_left_arr[2],offset_left_arr[3]);
+
+                // // // select the right value
+                // up_vec = _mm_add_ps(_mm_mul_ps(up_vec_valid,inf_vec),up_vec);
+                // left_vec = _mm_add_ps(_mm_mul_ps(left_vec_valid,inf_vec),left_vec);
+                // diag_vec = _mm_add_ps(_mm_mul_ps(diag_vec_valid,inf_vec),diag_vec);
+
+                // print_float_vec(left_vec, "left_vec");
+                // print_float_vec(left_vec_valid, "left_vec_valid");
+                // fprintf(stderr,"%f %f %f %f\n",offset_left_arr[0],offset_left_arr[1],offset_left_arr[2],offset_left_arr[3]);
+
+                // calculate scores
                 __m128 score_d = _mm_add_ps(diag_vec,_mm_add_ps(lp_step_vec,lp_emission_vec));
                 __m128 score_u = _mm_add_ps(up_vec,_mm_add_ps(lp_stay_vec,lp_emission_vec));
                 __m128 score_l = _mm_add_ps(left_vec,lp_skip_vec);
-
-                // __m128 max_score = score_d;
-
                 __m128 max_score = _mm_max_ps(score_l,_mm_max_ps(score_u,score_d));
 
                 //These vectors have a 1 where the max_score corresponds to the direction, and 0 where it doesn't
@@ -504,7 +584,7 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
                 //fprintf(stderr,"bands: %f %f %f %f\n",band_position[0],band_position[1],band_position[2],band_position[3]);
                 // fprintf(stderr,"\nband array: %f %f %f %f\n",BAND_ARRAY(band_idx,offset),BAND_ARRAY(band_idx,offset+1),BAND_ARRAY(band_idx,offset+2),BAND_ARRAY(band_idx,offset+3));
 
-                fills += 4;
+                fills += VEC_SIZE;
             }
 #ifdef DEBUG_ADAPTIVE
             fprintf(stderr,
@@ -674,6 +754,13 @@ int32_t align_simd(AlignedPair* out_2, char* sequence, int32_t sequence_len,
     free(lp_emission_arr);
     free(from_arr);
     free(band_arr);
+    free(models_mean_arr);
+    free(models_stdv_arr);
+    free(models_logstdv_arr);
+    free(events_arr);
+    // free(offset_up_arr);
+    // free(offset_left_arr);
+    // free(offset_diag_arr);
 
     //fprintf(stderr, "ada\t%s\t%s\t%.2lf\t%zu\t%.2lf\t%d\t%d\t%d\n", read.read_name.substr(0, 6).c_str(), failed ? "FAILED" : "OK", events_per_kmer, sequence.size(), avg_log_emission, curr_event_idx, max_gap, fills);
     //outSize=outIndex;
